@@ -44,6 +44,7 @@ static const uint8_t* active_report_map() {
         case USB_HID_DEVICE_MODE_MOUSE:          return hid_report_map_mouse;
         case USB_HID_DEVICE_MODE_KEYBOARD_MOUSE:  return hid_report_map_keyboard_consumer_mouse;
         case USB_HID_DEVICE_MODE_GAMEPAD:        return hid_report_map_gamepad;
+        case USB_HID_DEVICE_MODE_FIDO:           return hid_report_map_fido;
         default:                                 return hid_report_map_keyboard_consumer; // KEYBOARD
     }
 }
@@ -53,6 +54,7 @@ static size_t active_report_map_len() {
         case USB_HID_DEVICE_MODE_MOUSE:          return hid_report_map_mouse_len;
         case USB_HID_DEVICE_MODE_KEYBOARD_MOUSE:  return hid_report_map_keyboard_consumer_mouse_len;
         case USB_HID_DEVICE_MODE_GAMEPAD:        return hid_report_map_gamepad_len;
+        case USB_HID_DEVICE_MODE_FIDO:           return hid_report_map_fido_len;
         default:                                 return hid_report_map_keyboard_consumer_len;
     }
 }
@@ -69,6 +71,7 @@ static const char* default_name_for_mode(enum UsbHidDeviceMode mode) {
         case USB_HID_DEVICE_MODE_MOUSE:          return "Tactility Mouse";
         case USB_HID_DEVICE_MODE_KEYBOARD_MOUSE:  return "Tactility Keyboard+Mouse";
         case USB_HID_DEVICE_MODE_GAMEPAD:        return "Tactility Gamepad";
+        case USB_HID_DEVICE_MODE_FIDO:           return "Tactility FIDO";
         default:                                 return "Tactility Keyboard"; // KEYBOARD
     }
 }
@@ -78,6 +81,7 @@ static uint16_t product_id_for_mode(enum UsbHidDeviceMode mode) {
         case USB_HID_DEVICE_MODE_MOUSE:          return 0x4006;
         case USB_HID_DEVICE_MODE_KEYBOARD_MOUSE:  return 0x4007;
         case USB_HID_DEVICE_MODE_GAMEPAD:        return 0x4008;
+        case USB_HID_DEVICE_MODE_FIDO:           return 0x4009;
         default:                                 return 0x4004; // KEYBOARD (unchanged - existing PID)
     }
 }
@@ -128,8 +132,15 @@ static const char* hid_string_descriptor[] = {
 // Built fresh in hid_device_start(), sized for the active mode's report map. TinyUSB only reads
 // this once during tinyusb_driver_install() (inside claim()), so it's safe to mutate between
 // claim sessions (i.e. stop() + start() with a different mode) as long as it's finalized before
-// claim() is called.
-static uint8_t hid_configuration_descriptor[TUD_HID_DESC_LEN];
+// claim() is called. FIDO mode adds an OUT endpoint, which makes its descriptor the largest.
+static uint8_t hid_configuration_descriptor[TUD_HID_INOUT_DESC_LEN];
+static size_t hid_configuration_descriptor_len = 0;
+
+// Raw OUT report receiver for USB_HID_DEVICE_MODE_FIDO, see usb_hid_device_set_raw_report_callback().
+static UsbHidDeviceRawReportCallback raw_report_callback = nullptr;
+static void* raw_report_context = nullptr;
+
+static constexpr size_t FIDO_REPORT_SIZE = 64;
 
 // ---- TinyUSB HID callbacks (required by the TinyUSB HID class driver) ----
 
@@ -148,7 +159,17 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
                            uint8_t const* buffer, uint16_t bufsize) {
-    (void)instance; (void)report_id; (void)report_type; (void)buffer; (void)bufsize;
+    (void)instance; (void)report_id;
+    // A report on the interrupt OUT endpoint arrives as HID_REPORT_TYPE_INVALID, one sent with a
+    // SET_REPORT control request as HID_REPORT_TYPE_OUTPUT. CTAPHID hosts use the former.
+    if (active_mode == USB_HID_DEVICE_MODE_FIDO && (report_type == HID_REPORT_TYPE_INVALID || report_type == HID_REPORT_TYPE_OUTPUT)) {
+        UsbHidDeviceRawReportCallback callback = raw_report_callback;
+        if (callback != nullptr) {
+            callback(buffer, bufsize, raw_report_context);
+        }
+        return;
+    }
+    (void)buffer; (void)bufsize;
     // LED state (caps/num/scroll lock) - not currently surfaced to callers.
 }
 
@@ -174,9 +195,13 @@ static error_t hid_device_start(struct Device* device, enum UsbHidDeviceMode mod
         return begin_result;
     }
 
+    // FIDO is the only mode that receives reports on an interrupt OUT endpoint; the others only
+    // need the interrupt IN endpoint and take SET_REPORT control requests for output reports.
+    const uint8_t out_endpoint_count = mode == USB_HID_DEVICE_MODE_FIDO ? 1 : 0;
+
     struct UsbInterfaceAllocation alloc;
     error_t alloc_result = usb_device_controller_allocate_interfaces(controller, /*interface_count=*/1,
-                                                                       /*in_endpoint_count=*/1, /*out_endpoint_count=*/0, &alloc);
+                                                                       /*in_endpoint_count=*/1, out_endpoint_count, &alloc);
     if (alloc_result != ERROR_NONE) {
         return alloc_result;
     }
@@ -187,21 +212,31 @@ static error_t hid_device_start(struct Device* device, enum UsbHidDeviceMode mod
     active_mode = mode;
     build_hid_device_descriptor(mode);
 
-    const uint8_t hid_bytes[] = {
-        TUD_HID_DESCRIPTOR(alloc.first_interface_number, 4, HID_ITF_PROTOCOL_NONE,
-                            active_report_map_len(), alloc.first_in_endpoint, 16, 10),
-    };
-    memcpy(hid_configuration_descriptor, hid_bytes, sizeof(hid_bytes));
+    if (mode == USB_HID_DEVICE_MODE_FIDO) {
+        const uint8_t hid_bytes[] = {
+            TUD_HID_INOUT_DESCRIPTOR(alloc.first_interface_number, 4, HID_ITF_PROTOCOL_NONE,
+                                     active_report_map_len(), alloc.first_out_endpoint, alloc.first_in_endpoint, FIDO_REPORT_SIZE, 5),
+        };
+        memcpy(hid_configuration_descriptor, hid_bytes, sizeof(hid_bytes));
+        hid_configuration_descriptor_len = sizeof(hid_bytes);
+    } else {
+        const uint8_t hid_bytes[] = {
+            TUD_HID_DESCRIPTOR(alloc.first_interface_number, 4, HID_ITF_PROTOCOL_NONE,
+                                active_report_map_len(), alloc.first_in_endpoint, 16, 10),
+        };
+        memcpy(hid_configuration_descriptor, hid_bytes, sizeof(hid_bytes));
+        hid_configuration_descriptor_len = sizeof(hid_bytes);
+    }
 
     struct UsbDeviceClaimConfig claim_config = {};
     claim_config.device_descriptor = &hid_device_descriptor;
     claim_config.string_descriptor = hid_string_descriptor;
     claim_config.string_descriptor_count = sizeof(hid_string_descriptor) / sizeof(hid_string_descriptor[0]);
     claim_config.primary.descriptor_bytes = hid_configuration_descriptor;
-    claim_config.primary.descriptor_bytes_len = sizeof(hid_configuration_descriptor);
+    claim_config.primary.descriptor_bytes_len = hid_configuration_descriptor_len;
     claim_config.primary.interface_count = 1;
     claim_config.primary.in_endpoint_count = 1;
-    claim_config.primary.out_endpoint_count = 0;
+    claim_config.primary.out_endpoint_count = out_endpoint_count;
 
     return usb_device_controller_claim(controller, USB_DEVICE_CLASS_HID_KEYBOARD, &claim_config);
 }
@@ -291,6 +326,32 @@ static error_t hid_device_send_gamepad(struct Device* device, const uint8_t* rep
     return hid_send_report(REPORT_ID_GAMEPAD, buf, sizeof(buf));
 }
 
+static error_t hid_device_send_raw(struct Device* device, const uint8_t* report, size_t len) {
+    (void)device;
+    if (active_mode != USB_HID_DEVICE_MODE_FIDO) {
+        return ERROR_NOT_SUPPORTED;
+    }
+    // Report ID 0 makes TinyUSB send the bytes as-is, without a leading ID byte. Always a full
+    // 64-byte report: CTAPHID packets are fixed-size and hosts ignore the padding.
+    uint8_t buf[FIDO_REPORT_SIZE] = {};
+    memcpy(buf, report, len < sizeof(buf) ? len : sizeof(buf));
+    return hid_send_report(0, buf, sizeof(buf));
+}
+
+static error_t hid_device_set_raw_report_callback(struct Device* device, UsbHidDeviceRawReportCallback callback, void* context) {
+    (void)device;
+    // Context first, then the callback: tud_hid_set_report_cb() reads the callback once and
+    // then its context, so a receiver never sees the other receiver's context.
+    if (callback == nullptr) {
+        raw_report_callback = nullptr;
+        raw_report_context = nullptr;
+    } else {
+        raw_report_context = context;
+        raw_report_callback = callback;
+    }
+    return ERROR_NONE;
+}
+
 static bool hid_device_is_connected(struct Device* device) {
     (void)device;
     // tud_hid_ready() deliberately NOT included here: it reflects whether the endpoint is idle
@@ -313,6 +374,8 @@ extern const UsbHidDeviceApi esp32_usb_hid_device_api = {
     .send_mouse    = hid_device_send_mouse,
     .send_gamepad  = hid_device_send_gamepad,
     .is_connected  = hid_device_is_connected,
+    .send_raw      = hid_device_send_raw,
+    .set_raw_report_callback = hid_device_set_raw_report_callback,
 };
 
 // ---- Driver lifecycle ----

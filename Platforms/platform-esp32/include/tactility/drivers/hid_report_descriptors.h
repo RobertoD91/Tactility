@@ -41,6 +41,11 @@ extern const size_t hid_report_map_keyboard_consumer_mouse_len;
 extern const uint8_t hid_report_map_gamepad[];
 extern const size_t hid_report_map_gamepad_len;
 
+/** FIDO authenticator (CTAPHID): usage page 0xF1D0, usage 0x01, one 64-byte IN report and one
+ *  64-byte OUT report without report IDs, as the FIDO CTAP specification's HID transport defines. */
+extern const uint8_t hid_report_map_fido[];
+extern const size_t hid_report_map_fido_len;
+
 #ifdef __cplusplus
 }
 #endif

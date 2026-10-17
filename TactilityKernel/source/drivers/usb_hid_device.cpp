@@ -48,4 +48,12 @@ bool usb_hid_device_is_connected(struct Device* device) {
     return USB_HID_DEVICE_API(device)->is_connected(device);
 }
 
+error_t usb_hid_device_send_raw(struct Device* device, const uint8_t* report, size_t len) {
+    return USB_HID_DEVICE_API(device)->send_raw(device, report, len);
+}
+
+error_t usb_hid_device_set_raw_report_callback(struct Device* device, UsbHidDeviceRawReportCallback callback, void* context) {
+    return USB_HID_DEVICE_API(device)->set_raw_report_callback(device, callback, context);
+}
+
 } // extern "C"

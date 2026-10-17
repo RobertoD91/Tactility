@@ -139,6 +139,10 @@
 	usbdevice0 {
 		compatible = "espressif,esp32-usbdevice";
 
+		usbdevicehid0 {
+			compatible = "espressif,esp32-usbdevice-hid";
+		};
+
 		usbdevicemsc0 {
 			compatible = "espressif,esp32-usbdevice-msc";
 		};

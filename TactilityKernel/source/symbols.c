@@ -503,6 +503,8 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(usb_hid_device_send_mouse),
     DEFINE_MODULE_SYMBOL(usb_hid_device_send_gamepad),
     DEFINE_MODULE_SYMBOL(usb_hid_device_is_connected),
+    DEFINE_MODULE_SYMBOL(usb_hid_device_send_raw),
+    DEFINE_MODULE_SYMBOL(usb_hid_device_set_raw_report_callback),
     DEFINE_MODULE_SYMBOL(USB_HID_DEVICE_TYPE),
     // drivers/usb_msc_device
     DEFINE_MODULE_SYMBOL(usb_msc_device_get),

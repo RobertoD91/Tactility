@@ -222,4 +222,26 @@ const uint8_t hid_report_map_gamepad[] = {
 };
 const size_t hid_report_map_gamepad_len = sizeof(hid_report_map_gamepad);
 
+// FIDO authenticator (CTAPHID), no report IDs: the layout the FIDO CTAP specification's HID
+// transport requires, so hosts recognize the interface as a security key by its usage page.
+const uint8_t hid_report_map_fido[] = {
+    0x06, 0xD0, 0xF1,  // Usage Page: FIDO Alliance (0xF1D0)
+    0x09, 0x01,        // Usage: CTAPHID
+    0xA1, 0x01,        // Collection: Application
+    0x09, 0x20,        // Usage: Input Report Data
+    0x15, 0x00,        // Logical Minimum: 0
+    0x26, 0xFF, 0x00,  // Logical Maximum: 255
+    0x75, 0x08,        // Report Size: 8
+    0x95, 0x40,        // Report Count: 64
+    0x81, 0x02,        // Input: Data, Variable, Absolute
+    0x09, 0x21,        // Usage: Output Report Data
+    0x15, 0x00,        // Logical Minimum: 0
+    0x26, 0xFF, 0x00,  // Logical Maximum: 255
+    0x75, 0x08,        // Report Size: 8
+    0x95, 0x40,        // Report Count: 64
+    0x91, 0x02,        // Output: Data, Variable, Absolute
+    0xC0,              // End Collection
+};
+const size_t hid_report_map_fido_len = sizeof(hid_report_map_fido);
+
 } // extern "C"

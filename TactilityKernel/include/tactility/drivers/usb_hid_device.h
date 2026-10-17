@@ -30,7 +30,23 @@ enum UsbHidDeviceMode {
     USB_HID_DEVICE_MODE_KEYBOARD_MOUSE,
     /** Gamepad (report ID 1, 8 bytes: 5-byte axes, 1-byte hat/dpad, 2-byte buttons[10] padded). */
     USB_HID_DEVICE_MODE_GAMEPAD,
+    /**
+     * FIDO authenticator (CTAPHID): FIDO Alliance usage page 0xF1D0, one 64-byte raw IN report
+     * and one 64-byte raw OUT report, no report IDs. Reports are exchanged with send_raw() and
+     * set_raw_report_callback(); the send_* report helpers of the other modes don't apply.
+     */
+    USB_HID_DEVICE_MODE_FIDO,
 };
+
+/**
+ * Receives a raw OUT report from the host in USB_HID_DEVICE_MODE_FIDO.
+ * @warning Called on the USB stack's task. @a report is only valid during the call: copy it out
+ * and return quickly (e.g. push it onto a queue that the app's own task drains).
+ * @param[in] report the report bytes
+ * @param[in] len number of bytes (64 for a CTAPHID packet)
+ * @param[in] context the context given to set_raw_report_callback()
+ */
+typedef void (*UsbHidDeviceRawReportCallback)(const uint8_t* report, size_t len, void* context);
 
 /**
  * USB HID device profile API (present this device as a USB HID peripheral to a host).
@@ -114,6 +130,29 @@ struct UsbHidDeviceApi {
      * @return true when a USB host has mounted the device and the HID interface is ready
      */
     bool (*is_connected)(struct Device* device);
+
+    /**
+     * Send a raw IN report (no report ID). Only valid in USB_HID_DEVICE_MODE_FIDO. Blocks briefly
+     * while the endpoint finishes the previous report, so back-to-back packets of one CTAPHID
+     * message can be sent in a loop.
+     * @param[in] device the HID device child device
+     * @param[in] report pointer to the report bytes
+     * @param[in] len number of bytes (up to 64; shorter reports are zero-padded to 64)
+     * @retval ERROR_NOT_SUPPORTED when not in USB_HID_DEVICE_MODE_FIDO
+     * @retval ERROR_INVALID_STATE when no host is connected
+     * @retval ERROR_NONE on success
+     */
+    error_t (*send_raw)(struct Device* device, const uint8_t* report, size_t len);
+
+    /**
+     * Register the receiver of raw OUT reports for USB_HID_DEVICE_MODE_FIDO. Can be called before
+     * or after start(). Pass NULL to unregister; do so before the context is freed.
+     * @param[in] device the HID device child device
+     * @param[in] callback the callback, or NULL
+     * @param[in] context passed to @a callback
+     * @return ERROR_NONE on success
+     */
+    error_t (*set_raw_report_callback)(struct Device* device, UsbHidDeviceRawReportCallback callback, void* context);
 };
 
 extern const struct DeviceType USB_HID_DEVICE_TYPE;
@@ -133,6 +172,8 @@ error_t usb_hid_device_send_consumer(struct Device* device, const uint8_t* repor
 error_t usb_hid_device_send_mouse(struct Device* device, const uint8_t* report, size_t len);
 error_t usb_hid_device_send_gamepad(struct Device* device, const uint8_t* report, size_t len);
 bool    usb_hid_device_is_connected(struct Device* device);
+error_t usb_hid_device_send_raw(struct Device* device, const uint8_t* report, size_t len);
+error_t usb_hid_device_set_raw_report_callback(struct Device* device, UsbHidDeviceRawReportCallback callback, void* context);
 
 #ifdef __cplusplus
 }
