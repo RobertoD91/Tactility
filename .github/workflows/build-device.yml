@@ -1,0 +1,29 @@
+name: Build Device Firmware
+# Builds the firmware for one device on demand (Actions tab -> "Build Device Firmware" -> Run workflow),
+# instead of the full device matrix that runs on pushes to main and pull requests.
+on:
+  workflow_dispatch:
+    inputs:
+      board_id:
+        description: "Device id (a folder name under Devices/)"
+        required: true
+        default: generic-esp32s3
+      arch:
+        description: "ESP32 target: esp32, esp32s3, esp32c6 or esp32p4"
+        required: true
+        default: esp32s3
+
+permissions: read-all
+
+jobs:
+  BuildFirmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: "Build Firmware"
+        uses: ./.github/actions/build-firmware
+        with:
+          board_id: ${{ inputs.board_id }}
+          arch: ${{ inputs.arch }}
