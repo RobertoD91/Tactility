@@ -1,0 +1,114 @@
+name: RHC2026 badge firmware (FIDO)
+# Builds the RomHack Camp 2026 badge firmware (https://github.com/CyberSaiyanIT/rhc2026-badge) with the
+# USB HID FIDO mode, plus the TactilitySDK that matches it, so the Passkey app can be built for the badge.
+# The badge ships its own copy of Tactility under firmware/tactility, so the patches in rhc2026-badge/
+# are applied to that copy instead of to this repository.
+on:
+  push:
+    branches: [rhc2026-badge-fido]
+  workflow_dispatch:
+    inputs:
+      badge_ref:
+        description: "Commit, tag or branch of CyberSaiyanIT/rhc2026-badge"
+        required: false
+        default: c6b737580ab28d368f7eb10c641e6739cd2bf639
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BADGE_REF: ${{ inputs.badge_ref || 'c6b737580ab28d368f7eb10c641e6739cd2bf639' }}
+      IDF_IMAGE: docker.io/espressif/idf:v5.5.2
+    steps:
+      - name: Checkout the patches
+        uses: actions/checkout@v4
+        with:
+          path: fork
+          persist-credentials: false
+
+      - name: Checkout the badge firmware
+        uses: actions/checkout@v4
+        with:
+          repository: CyberSaiyanIT/rhc2026-badge
+          ref: ${{ env.BADGE_REF }}
+          path: badge
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          docker system prune --all --force
+
+      - name: Initialize submodules
+        working-directory: badge
+        run: firmware/tactility/Buildscripts/init-submodules.sh
+
+      - name: Apply the FIDO patches
+        working-directory: badge
+        run: |
+          # 0001 is the upstream Tactility patch: only its driver changes apply here, the badge has its own Devices/.
+          git apply --verbose --directory=firmware/tactility --exclude='firmware/tactility/Devices/*' \
+            ../fork/rhc2026-badge/0001-Add-USB-HID-FIDO-mode-for-CTAPHID-authenticators.patch
+          git apply --verbose ../fork/rhc2026-badge/0002-romhack2026-badge-usb-fido-hid.patch
+          git status --short
+
+      - name: Preload camp map and schedule
+        working-directory: badge
+        # Live data from romhack.io: the build doesn't depend on it, so a download failure keeps the copy in git.
+        run: firmware/update_data.sh || echo "::warning::update_data.sh failed, using the data committed in the badge repository"
+
+      - name: Build Tactility and Retro-Go
+        working-directory: badge
+        env:
+          CONTAINER_ENGINE: docker
+        run: firmware/build_all.sh
+
+      - name: Build the TactilitySDK for this firmware
+        working-directory: badge/firmware/tactility
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e ESP_IDF_VERSION=5.5 \
+            -v "$PWD":/project -w /project "$IDF_IMAGE" \
+            bash -c "python Buildscripts/release-sdk-esp32.py release/TactilitySDK"
+
+      - name: Collect the outputs
+        run: |
+          mkdir -p out/sdk/sdk/0.8.0-dev/platform-esp32s3 out/tactility
+          mv badge/firmware/fw.img out/rhc2026-badge-fido.bin
+          cp -r badge/firmware/tactility/release/TactilitySDK out/sdk/sdk/0.8.0-dev/platform-esp32s3/TactilitySDK
+          mkdir -p out/sdk/sdk/0.8.0-dev/tools
+          cp badge/firmware/tactility/Buildscripts/TactilitySDK/Tools/*.py out/sdk/sdk/0.8.0-dev/tools/
+          cd badge/firmware/tactility/build
+          cp flash_project_args ../../../../out/tactility/
+          while read -r offset file; do
+            case "$offset" in 0x*) mkdir -p "../../../../out/tactility/$(dirname "$file")"; cp "$file" "../../../../out/tactility/$file";; esac
+          done < flash_project_args
+          cd -
+          (cd badge && git rev-parse HEAD) > out/badge-commit.txt
+          ls -la out
+
+      - name: "Upload: full image (flash at 0x0)"
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhc2026-badge-fido-full-image
+          path: |
+            out/rhc2026-badge-fido.bin
+            out/badge-commit.txt
+          retention-days: 30
+
+      - name: "Upload: Tactility only"
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhc2026-badge-fido-tactility
+          path: out/tactility
+          retention-days: 30
+
+      - name: "Upload: TactilitySDK (use as TACTILITY_SDK_PATH)"
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhc2026-badge-fido-sdk
+          path: out/sdk
+          retention-days: 30
