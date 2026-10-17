@@ -16,7 +16,11 @@ Artifacts of a run:
 |---|---|
 | `rhc2026-badge-fido-full-image` | `rhc2026-badge-fido.bin`: Tactility + Retro-Go, one 16 MB image for offset `0x0` |
 | `rhc2026-badge-fido-tactility` | Tactility only, with `flash_project_args` |
-| `rhc2026-badge-fido-sdk` | the TactilitySDK of this firmware, laid out for `TACTILITY_SDK_PATH` |
+| `rhc2026-badge-fido-sdk` | the TactilitySDK of this firmware (ESP-IDF 5.5) |
+
+The badge's Tactility predates the `tt` tool: its apps use a format 0.2 manifest and are packaged
+as `manifest.properties` plus `elf/esp32s3.elf`. passkey-tactility builds such a package with
+`Scripts/build-rhc2026-badge-app.sh <TactilitySDK>`.
 
 Flashing the full image erases the badge's data partition (like the badge's own release image):
 

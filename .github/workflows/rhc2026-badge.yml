@@ -73,14 +73,18 @@ jobs:
           docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e ESP_IDF_VERSION=5.5 \
             -v "$PWD":/project -w /project "$IDF_IMAGE" \
             bash -c "python Buildscripts/release-sdk-esp32.py release/TactilitySDK"
+          # The release script looks for LVGL as the managed component (lvgl__lvgl), but the badge
+          # builds it from Libraries/lvgl as component "lvgl", and missing sources are skipped silently.
+          if [ ! -f release/TactilitySDK/Libraries/lvgl/binary/liblvgl.a ]; then
+            mkdir -p release/TactilitySDK/Libraries/lvgl/binary
+            cp build/esp-idf/lvgl/liblvgl.a release/TactilitySDK/Libraries/lvgl/binary/liblvgl.a
+          fi
 
       - name: Collect the outputs
         run: |
-          mkdir -p out/sdk/sdk/0.8.0-dev/platform-esp32s3 out/tactility
+          mkdir -p out/sdk out/tactility
           mv badge/firmware/fw.img out/rhc2026-badge-fido.bin
-          cp -r badge/firmware/tactility/release/TactilitySDK out/sdk/sdk/0.8.0-dev/platform-esp32s3/TactilitySDK
-          mkdir -p out/sdk/sdk/0.8.0-dev/tools
-          cp badge/firmware/tactility/Buildscripts/TactilitySDK/Tools/*.py out/sdk/sdk/0.8.0-dev/tools/
+          cp -r badge/firmware/tactility/release/TactilitySDK out/sdk/TactilitySDK
           cd badge/firmware/tactility/build
           cp flash_project_args ../../../../out/tactility/
           while read -r offset file; do
@@ -106,7 +110,7 @@ jobs:
           path: out/tactility
           retention-days: 30
 
-      - name: "Upload: TactilitySDK (use as TACTILITY_SDK_PATH)"
+      - name: "Upload: TactilitySDK of this firmware"
         uses: actions/upload-artifact@v4
         with:
           name: rhc2026-badge-fido-sdk
